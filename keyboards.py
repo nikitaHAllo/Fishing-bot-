@@ -71,6 +71,7 @@ def group_menu_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text=BTN_PROFILE, callback_data="go:profile"),
                 InlineKeyboardButton(text=BTN_TOP, callback_data="go:top"),
             ],
+            [InlineKeyboardButton(text="🕸️ Сеть", callback_data="go:haul")],
             [InlineKeyboardButton(text=BTN_DAILY, callback_data="go:bonus")],
         ]
     )

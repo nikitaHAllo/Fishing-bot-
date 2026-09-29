@@ -10,7 +10,10 @@ from game_data import (
     RARITY,
     RODS,
     calc_price,
+    find_chance,
+    finds_for,
     fishes_for,
+    is_catch_fish,
     location_index,
     rarities_in_location,
     rod_index,
@@ -175,6 +178,69 @@ ACHIEVEMENTS = [
 
 
 def roll_rarity(location_id: str, luck: int) -> str:
+    weights = _fish_weights(location_id, luck)
+    population = list(weights)
+    return random.choices(population, weights=[weights[key] for key in population], k=1)[0]
+
+
+def roll_catch(location_id: str, luck: int) -> dict:
+    finds = finds_for(location_id)
+    if finds and random.random() < find_chance(location_id, luck):
+        return _from_item(_pick_find(finds, luck), luck, location_id)
+    rarity = roll_rarity(location_id, luck)
+    pool = fishes_for(location_id, rarity)
+    if not pool:
+        for fallback in ("common", "uncommon", "rare", "trash", "epic"):
+            pool = fishes_for(location_id, fallback)
+            if pool:
+                break
+    if not pool:
+        pool = [
+            fish
+            for fish in FISH_BY_ID.values()
+            if is_catch_fish(fish) and location_id in fish["locations"]
+        ]
+    if not pool:
+        pool = [next(iter(FISH_BY_ID.values()))]
+    return _from_item(random.choice(pool), luck, location_id)
+
+
+def _pick_find(finds: list[dict], luck: int) -> dict:
+    weights = _find_weights(finds, luck)
+    population = list(weights)
+    rarity = random.choices(population, weights=[weights[key] for key in population], k=1)[0]
+    pool = [item for item in finds if item["rarity"] == rarity]
+    return random.choice(pool or finds)
+
+
+def _from_item(fish: dict, luck: int, location_id: str) -> dict:
+    weight = random.randint(fish["min_g"], fish["max_g"])
+    weight = int(weight * (1 + min(max(luck, 0), 100) / 100 * 0.12))
+    packed = _pack(fish, weight)
+    packed["chance"] = item_chance(location_id, luck, fish)
+    return packed
+
+
+def item_chance(location_id: str, luck: int, item: dict) -> float:
+    finds = finds_for(location_id)
+    p_find = find_chance(location_id, luck) if finds else 0.0
+    if item.get("kind") == "find":
+        weights = _find_weights(finds, luck)
+        same = [found for found in finds if found["rarity"] == item["rarity"]]
+        return p_find * _share(weights, item["rarity"]) / max(1, len(same))
+    weights = _fish_weights(location_id, luck)
+    pool = fishes_for(location_id, item["rarity"])
+    return (1 - p_find) * _share(weights, item["rarity"]) / max(1, len(pool))
+
+
+def _share(weights: dict[str, float], rarity: str) -> float:
+    total = sum(weights.values())
+    if total <= 0:
+        return 0.0
+    return weights.get(rarity, 0.0) / total
+
+
+def _fish_weights(location_id: str, luck: int) -> dict[str, float]:
     luck = max(0, min(int(luck), 150))
     available = rarities_in_location(location_id)
     raw = {
@@ -187,28 +253,23 @@ def roll_rarity(location_id: str, luck: int) -> str:
         "mythic": 0.06 + luck * 0.008,
     }
     weights = {key: value for key, value in raw.items() if key in available and value > 0}
-    if not weights:
-        weights = {"common": 1.0}
-    population = list(weights)
-    return random.choices(population, weights=[weights[key] for key in population], k=1)[0]
+    return weights or {"common": 1.0}
 
 
-def roll_catch(location_id: str, luck: int) -> dict:
-    rarity = roll_rarity(location_id, luck)
-    pool = fishes_for(location_id, rarity)
-    if not pool:
-        for fallback in ("common", "uncommon", "rare", "trash", "epic"):
-            pool = fishes_for(location_id, fallback)
-            if pool:
-                break
-    if not pool:
-        pool = [fish for fish in FISH_BY_ID.values() if location_id in fish["locations"]]
-    if not pool:
-        pool = [next(iter(FISH_BY_ID.values()))]
-    fish = random.choice(pool)
-    weight = random.randint(fish["min_g"], fish["max_g"])
-    weight = int(weight * (1 + min(luck, 100) / 100 * 0.12))
-    return _pack(fish, weight)
+def _find_weights(finds: list[dict], luck: int) -> dict[str, float]:
+    luck = max(0, min(int(luck), 150))
+    raw = {
+        "trash": 8.0,
+        "common": max(8.0, 34 - luck * 0.12),
+        "uncommon": 26 + luck * 0.05,
+        "rare": 18 + luck * 0.1,
+        "epic": 8 + luck * 0.06,
+        "legendary": 4 + luck * 0.03,
+        "mythic": 1.4 + luck * 0.015,
+    }
+    available = {item["rarity"] for item in finds}
+    weights = {key: value for key, value in raw.items() if key in available and value > 0}
+    return weights or {"common": 1.0}
 
 
 def reaction_bonus(seconds: float) -> tuple[float, str]:
@@ -229,6 +290,7 @@ def apply_reaction(catch: dict, seconds: float) -> dict:
     packed["reaction"] = seconds
     packed["reaction_label"] = label
     packed["trophy"] = weight > fish["max_g"]
+    packed["chance"] = catch.get("chance")
     return packed
 
 
@@ -263,6 +325,7 @@ def _pack(fish: dict, weight: int) -> dict:
         "xp": rarity["xp"],
         "note": fish.get("note"),
         "max_g": fish["max_g"],
+        "kind": fish.get("kind", "fish"),
     }
 
 

@@ -6,3 +6,5 @@ __pycache__/
 fishing.db
 fishing.db-*
 *.log
+sticker_cache.json
+stickers/

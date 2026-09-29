@@ -112,7 +112,7 @@ def help_text() -> str:
         "5. Наживка тратится на каждую поклёвку, даже если рыба ушла.\n"
         "6. В садке помещается 40 рыб. Дальше надо продавать.\n\n"
         "В общем чате улов виден всем. Свой чат выбирается командой /here.\n\n"
-        "Команды: /fish /profile /top /sell /bonus /help"
+        "Команды: /fish /location /bait /net /inventory /profile /help"
     )
 
 
@@ -160,8 +160,9 @@ def escape_text(data: dict) -> str:
 
 
 def catch_text(data: dict) -> str:
+    title = "находка" if data.get("kind") == "find" else "поклёвка"
     lines = [
-        f"{data['rarity_emoji']} <b>{data['rarity_name']} поклёвка</b>",
+        f"{data['rarity_emoji']} <b>{data['rarity_name']} {title}</b>",
         "",
         f"{data['emoji']} <b>{escape(data['name'])}</b>",
         f"Вес: {fmt_weight(data['weight'])}",
@@ -169,6 +170,10 @@ def catch_text(data: dict) -> str:
         f"Опыт: +{fmt_int(data['xp'])} XP",
         f"{data['reaction_label']} · {fmt_seconds(data['reaction'])}",
     ]
+    chance = data.get("chance")
+    if chance:
+        percent = f"{chance * 100:.1f}".replace(".", ",")
+        lines.append(f"Вероятность этой находки: {percent}%.")
     if data.get("trophy"):
         lines.append("🏆 Трофейный экземпляр — тяжелее обычного.")
     if data.get("record"):
@@ -306,9 +311,10 @@ def locations_text(player: dict) -> str:
             lock = f" · с {location['level']} ур."
         else:
             lock = ""
+        chance = int(round(float(location.get("find", 0.08)) * 100))
         lines.append(
             f"{location['emoji']} <b>{location['name']}</b>{here}{lock}\n"
-            f"{location['desc']} Удача локации +{location['luck']}."
+            f"{location['desc']} Удача +{location['luck']}. Шанс находки {chance}%."
         )
     return "\n".join(lines)
 
@@ -370,6 +376,32 @@ def daily_ok(gain: int, coins: int, xp: int, level: int, locations: list[dict], 
     for location in locations:
         lines.append(f"📍 Открыто: {location['emoji']} {location['name']}")
     return "\n".join(lines) + achievements_block(achievements)
+
+
+def net_text(data: dict) -> str:
+    lines = ["🕸️ <b>Сеть поднята</b>", ""]
+    for item in data["items"]:
+        lines.append(
+            f"{item['emoji']} {escape(item['name'])} — {fmt_weight(item['weight'])}"
+        )
+    gained = sum(item["xp"] for item in data["items"])
+    lines.append(f"\nОпыт: +{fmt_int(gained)} XP")
+    lines.append(
+        f"⭐ Уровень {data['level']}  {bar(data['into'], data['need'])}  {data['into']}/{data['need']}"
+    )
+    if data.get("leveled"):
+        lines.append(f"🎉 Новый уровень: <b>{data['level']}</b>")
+    for location in data.get("new_locations") or []:
+        lines.append(f"📍 Открыто: {location['emoji']} {escape(location['name'])}")
+    kn = data["keepnet"]
+    lines.append(f"\n🎒 В садке: {kn['count']} · {fmt_int(kn['value'])} 💰")
+    lines.append("Следующая сеть — завтра.")
+    lines.append(achievements_block(data.get("achievements") or []))
+    return "\n".join(lines)
+
+
+def net_wait(left: str) -> str:
+    return f"🕸️ Сеть уже доставали сегодня.\nСледующий заброс через {left}."
 
 
 def daily_wait(left: str) -> str:

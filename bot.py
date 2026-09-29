@@ -47,6 +47,7 @@ from keyboards import (
     rods_kb,
     shop_kb,
 )
+from stickers import sticker_file_id
 from storage import Database, db
 import texts
 
@@ -242,6 +243,30 @@ async def fish(message: Message, player: dict) -> None:
         await message.answer(header + error)
 
 
+async def show_catch(cb: CallbackQuery, header: str, result: dict) -> None:
+    text = header + texts.catch_text(result)
+    file_id = None
+    try:
+        file_id = await sticker_file_id(cb.bot, cb.from_user.id, result["fish_id"])
+    except Exception:
+        log.exception("Не удалось подготовить стикер")
+    deleted = False
+    try:
+        await cb.message.delete()
+        deleted = True
+    except TelegramBadRequest:
+        deleted = False
+    if file_id:
+        try:
+            await cb.bot.send_sticker(cb.message.chat.id, file_id)
+        except TelegramBadRequest:
+            log.warning("Стикер не отправился")
+    if deleted:
+        await cb.bot.send_message(cb.message.chat.id, text)
+    else:
+        await cb.message.edit_text(text, reply_markup=NO_INLINE)
+
+
 @private.callback_query(F.data.startswith("h:"))
 async def hook(cb: CallbackQuery, player: dict, db: Database) -> None:
     result = await db.resolve_hook(cb.from_user.id, cb.data[2:], time.time())
@@ -254,9 +279,10 @@ async def hook(cb: CallbackQuery, player: dict, db: Database) -> None:
         await cb.message.edit_text(header + texts.escape_text(result), reply_markup=NO_INLINE)
         return
     await cb.answer("Есть")
-    await cb.message.edit_text(header + texts.catch_text(result), reply_markup=NO_INLINE)
+    await show_catch(cb, header, result)
 
 
+@private.message(Command("inventory"))
 @private.message(F.text == BTN_NET)
 async def keepnet(message: Message, db: Database) -> None:
     view = await db.keepnet_view(message.from_user.id)
@@ -421,6 +447,7 @@ async def unequip(cb: CallbackQuery, db: Database) -> None:
     )
 
 
+@private.message(Command("location"))
 @private.message(F.text == BTN_LOC)
 async def locations(message: Message, player: dict) -> None:
     level = texts.level_from_xp(player["xp"])[0]
@@ -489,6 +516,40 @@ async def top(message: Message, db: Database) -> None:
     await message.answer(texts.top_text(board["rows"], board["place"], board["me"]))
 
 
+@private.message(Command("bait"))
+async def bait_cmd(message: Message, player: dict, db: Database) -> None:
+    stock = await db.bait_stock(message.from_user.id)
+    header = who(player, message.chat.type)
+    await message.answer(
+        header + texts.bait_text(player, stock),
+        reply_markup=bait_kb(stock, player["bait_id"]),
+    )
+
+
+async def throw_net(message: Message, user_id: int, player: dict, db: Database) -> None:
+    result = await db.cast_net(user_id)
+    header = who(player, message.chat.type)
+    if not result["ok"]:
+        if result["error"] == "used":
+            await message.answer(header + texts.net_wait(texts.until_midnight()))
+        else:
+            await message.answer(header + texts.full_net_text())
+        return
+    best = max(result["items"], key=lambda item: item["price"])
+    try:
+        file_id = await sticker_file_id(message.bot, user_id, best["fish_id"])
+        if file_id:
+            await message.answer_sticker(file_id)
+    except Exception:
+        log.exception("Стикер сети не отправился")
+    await message.answer(header + texts.net_text(result))
+
+
+@private.message(Command("net"))
+async def net_cmd(message: Message, player: dict, db: Database) -> None:
+    await throw_net(message, message.from_user.id, player, db)
+
+
 @private.message(Command("bonus"))
 @private.message(F.text == BTN_DAILY)
 async def daily(message: Message, db: Database) -> None:
@@ -543,6 +604,8 @@ async def menu_action(cb: CallbackQuery, player: dict, db: Database) -> None:
     elif action == "top":
         board = await db.leaderboard(cb.from_user.id)
         await cb.message.answer(texts.top_text(board["rows"], board["place"], board["me"]))
+    elif action == "haul":
+        await throw_net(cb.message, cb.from_user.id, player, db)
     elif action == "bonus":
         result = await db.claim_daily(cb.from_user.id)
         if not result["ok"]:
@@ -593,13 +656,15 @@ async def main() -> None:
     private.message.middleware(middleware)
     private.callback_query.middleware(middleware)
     commands = [
-        BotCommand(command="start", description="Начать рыбалку"),
-        BotCommand(command="fish", description="Забросить удочку"),
+        BotCommand(command="location", description="Выбрать локацию"),
+        BotCommand(command="bait", description="Выбрать наживку"),
+        BotCommand(command="fish", description="Попробовать поймать рыбу"),
+        BotCommand(command="net", description="Достать сеть (раз в сутки)"),
+        BotCommand(command="inventory", description="Показать улов"),
         BotCommand(command="profile", description="Профиль"),
         BotCommand(command="top", description="Топ рыбаков"),
         BotCommand(command="sell", description="Продать садок"),
         BotCommand(command="bonus", description="Ежедневный бонус"),
-        BotCommand(command="here", description="Сделать этот чат общим"),
         BotCommand(command="help", description="Как играть"),
     ]
     await bot.set_my_commands(commands)

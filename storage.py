@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 import secrets
 import sqlite3
 import time
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS users (
     earned INTEGER NOT NULL DEFAULT 0,
     loc_rank INTEGER NOT NULL DEFAULT 0,
     daily_on TEXT,
+    net_on TEXT,
     created_at REAL NOT NULL
 );
 
@@ -108,6 +110,9 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=3000")
         self.conn.executescript(SCHEMA)
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(users)")}
+        if "net_on" not in columns:
+            self.conn.execute("ALTER TABLE users ADD COLUMN net_on TEXT")
         self.conn.execute("DELETE FROM bites")
         self.conn.commit()
 
@@ -386,7 +391,7 @@ class Database:
             luck = rod["luck"] + loc_luck + bait["luck"]
             reaction = max(0.0, now - float(bite["bite_at"] or now))
             catch = apply_reaction(roll_catch(user["location_id"], luck), reaction)
-            escaped = did_escape(catch["rarity"], luck)
+            escaped = catch.get("kind") != "find" and did_escape(catch["rarity"], luck)
             payload = {
                 **catch,
                 "escaped": escaped,
@@ -446,6 +451,82 @@ class Database:
                 coins=fresh["coins"],
             )
             return payload
+
+        return await self._run(run)
+
+    async def cast_net(self, user_id: int) -> dict:
+        def run():
+            user = self._user(user_id)
+            today = date.today().isoformat()
+            if user.get("net_on") == today:
+                return {"ok": False, "error": "used"}
+            room = KEEPNET_LIMIT - self._keepnet_summary(user_id)["count"]
+            if room <= 0:
+                return {"ok": False, "error": "full"}
+            rod = ROD_BY_ID.get(user["rod_id"], RODS[0])
+            location = LOC_BY_ID.get(user["location_id"])
+            loc_luck = location["luck"] if location else 0
+            bait_luck = 0
+            bait = BAIT_BY_ID.get(user["bait_id"]) if user["bait_id"] else None
+            if bait and self._qty(user_id, bait["id"]) > 0:
+                bait_luck = bait["luck"]
+            luck = rod["luck"] + loc_luck + bait_luck
+            pulls = min(room, random.randint(4, 6))
+            now = time.time()
+            old_level = level_from_xp(user["xp"])[0]
+            xp = user["xp"]
+            total_weight = user["total_weight"]
+            best_weight = user["best_weight"]
+            best_fish = user["best_fish_id"]
+            items = []
+            for _ in range(pulls):
+                catch = apply_reaction(roll_catch(user["location_id"], luck), 3.0)
+                if catch["weight"] > best_weight:
+                    best_weight = catch["weight"]
+                    best_fish = catch["fish_id"]
+                xp += catch["xp"]
+                total_weight += catch["weight"]
+                self.conn.execute(
+                    """
+                    INSERT INTO keepnet (user_id, fish_id, weight, price, caught_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (user_id, catch["fish_id"], catch["weight"], catch["price"], now),
+                )
+                self.conn.execute(
+                    """
+                    INSERT INTO bestiary (user_id, fish_id, count, best_weight)
+                    VALUES (?, ?, 1, ?)
+                    ON CONFLICT(user_id, fish_id) DO UPDATE SET
+                        count=count+1,
+                        best_weight=MAX(bestiary.best_weight, excluded.best_weight)
+                    """,
+                    (user_id, catch["fish_id"], catch["weight"]),
+                )
+                items.append(catch)
+            self.conn.execute(
+                """
+                UPDATE users
+                SET xp=?, catches=catches+?, total_weight=?,
+                    best_weight=?, best_fish_id=?, net_on=?
+                WHERE user_id=?
+                """,
+                (xp, pulls, total_weight, best_weight, best_fish, today, user_id),
+            )
+            achievements = self._grant_achievements(user_id)
+            fresh = self._user(user_id)
+            level, into, need = level_from_xp(fresh["xp"])
+            return {
+                "ok": True,
+                "items": items,
+                "achievements": achievements,
+                "level": level,
+                "into": into,
+                "need": need,
+                "leveled": level > old_level,
+                "new_locations": locations_unlocked(old_level, level),
+                "keepnet": self._keepnet_summary(user_id),
+            }
 
         return await self._run(run)
 
