@@ -159,12 +159,22 @@ def escape_text(data: dict) -> str:
     return "\n".join(lines)
 
 
-def catch_text(data: dict) -> str:
+def linked_name(name: str, url: str | None) -> str:
+    safe = escape(name)
+    if not url:
+        return safe
+    return f'<a href="{escape(url, quote=True)}">{safe}</a>'
+
+
+def catch_text(data: dict, fish_url: str | None = None) -> str:
     title = "находка" if data.get("kind") == "find" else "поклёвка"
+    name = linked_name(data["name"], fish_url)
+    if not fish_url:
+        name = f"<b>{name}</b>"
     lines = [
         f"{data['rarity_emoji']} <b>{data['rarity_name']} {title}</b>",
         "",
-        f"{data['emoji']} <b>{escape(data['name'])}</b>",
+        f"{data['emoji']} {name}",
         f"Вес: {fmt_weight(data['weight'])}",
     ]
     if data.get("location_name"):
@@ -386,7 +396,7 @@ def daily_ok(gain: int, coins: int, xp: int, level: int, locations: list[dict], 
     return "\n".join(lines) + achievements_block(achievements)
 
 
-def net_text(data: dict) -> str:
+def net_text(data: dict, fish_url: str | None = None, linked_fish_id: str | None = None) -> str:
     lines = ["🕸️ <b>Сеть поднята</b>"]
     if data.get("location_name"):
         lines.append(
@@ -396,8 +406,9 @@ def net_text(data: dict) -> str:
     for item in data["items"]:
         count = item.get("same_count")
         tail = f" · теперь {fmt_int(count)} шт." if count else ""
+        url = fish_url if linked_fish_id and item.get("fish_id") == linked_fish_id else None
         lines.append(
-            f"{item['emoji']} {escape(item['name'])} — {fmt_weight(item['weight'])}{tail}"
+            f"{item['emoji']} {linked_name(item['name'], url)} — {fmt_weight(item['weight'])}{tail}"
         )
     gained = sum(item["xp"] for item in data["items"])
     lines.append(f"\nОпыт: +{fmt_int(gained)} XP")

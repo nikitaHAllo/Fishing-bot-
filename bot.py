@@ -23,7 +23,9 @@ from aiogram.types import (
     ChatMemberUpdated,
     ErrorEvent,
     InlineKeyboardMarkup,
+    LinkPreviewOptions,
     Message,
+    ReplyParameters,
 )
 from dotenv import load_dotenv
 
@@ -66,6 +68,7 @@ logging.basicConfig(
 log = logging.getLogger("fishing")
 
 NO_INLINE = InlineKeyboardMarkup(inline_keyboard=[])
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 TASKS: set[asyncio.Task] = set()
 
 private = Router()
@@ -243,8 +246,30 @@ async def fish(message: Message, player: dict) -> None:
         await message.answer(header + error)
 
 
+def sticker_jump_url(chat, message_id: int, peer_id: int | None = None) -> str | None:
+    username = getattr(chat, "username", None)
+    if username:
+        return f"https://t.me/{username}/{message_id}"
+    chat_id = str(chat.id)
+    if chat.type in {"supergroup", "channel"} and chat_id.startswith("-100"):
+        return f"tg://privatepost?channel={chat_id[4:]}&post={message_id}"
+    if chat.type == "private" and peer_id:
+        return f"tg://openmessage?user_id={peer_id}&message_id={message_id}"
+    return None
+
+
+async def send_html(bot: Bot, chat_id: int, text: str, plain: str, reply_to: int | None = None) -> None:
+    reply = None
+    if reply_to:
+        reply = ReplyParameters(message_id=reply_to, allow_sending_without_reply=True)
+    try:
+        await bot.send_message(chat_id, text, link_preview_options=NO_PREVIEW, reply_parameters=reply)
+    except TelegramBadRequest as error:
+        log.warning("Ссылка на улов не встала: %s", error)
+        await bot.send_message(chat_id, plain, link_preview_options=NO_PREVIEW, reply_parameters=reply)
+
+
 async def show_catch(cb: CallbackQuery, header: str, result: dict) -> None:
-    text = header + texts.catch_text(result)
     file_id = None
     try:
         file_id = await sticker_file_id(cb.bot, cb.from_user.id, result["fish_id"])
@@ -256,15 +281,26 @@ async def show_catch(cb: CallbackQuery, header: str, result: dict) -> None:
         deleted = True
     except TelegramBadRequest:
         deleted = False
+    sticker = None
     if file_id:
         try:
-            await cb.bot.send_sticker(cb.message.chat.id, file_id)
+            sticker = await cb.bot.send_sticker(cb.message.chat.id, file_id)
         except TelegramBadRequest:
             log.warning("Стикер не отправился")
+    fish_url = None
+    if sticker is not None:
+        peer_id = sticker.from_user.id if sticker.from_user else None
+        fish_url = sticker_jump_url(cb.message.chat, sticker.message_id, peer_id)
+    text = header + texts.catch_text(result, fish_url)
+    plain = header + texts.catch_text(result)
     if deleted:
-        await cb.bot.send_message(cb.message.chat.id, text)
+        reply_to = sticker.message_id if sticker is not None else None
+        await send_html(cb.bot, cb.message.chat.id, text, plain, reply_to)
     else:
-        await cb.message.edit_text(text, reply_markup=NO_INLINE)
+        try:
+            await cb.message.edit_text(text, reply_markup=NO_INLINE, link_preview_options=NO_PREVIEW)
+        except TelegramBadRequest:
+            await cb.message.edit_text(plain, reply_markup=NO_INLINE, link_preview_options=NO_PREVIEW)
 
 
 @private.callback_query(F.data.startswith("h:"))
@@ -536,13 +572,21 @@ async def throw_net(message: Message, user_id: int, player: dict, db: Database) 
             await message.answer(header + texts.full_net_text())
         return
     best = max(result["items"], key=lambda item: item["price"])
+    sticker = None
     try:
         file_id = await sticker_file_id(message.bot, user_id, best["fish_id"])
         if file_id:
-            await message.answer_sticker(file_id)
+            sticker = await message.answer_sticker(file_id)
     except Exception:
         log.exception("Стикер сети не отправился")
-    await message.answer(header + texts.net_text(result))
+    fish_url = None
+    if sticker is not None:
+        peer_id = sticker.from_user.id if sticker.from_user else None
+        fish_url = sticker_jump_url(message.chat, sticker.message_id, peer_id)
+    text = header + texts.net_text(result, fish_url, best["fish_id"])
+    plain = header + texts.net_text(result)
+    reply_to = sticker.message_id if sticker is not None else None
+    await send_html(message.bot, message.chat.id, text, plain, reply_to)
 
 
 @private.message(Command("net"))
