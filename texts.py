@@ -166,6 +166,14 @@ def catch_text(data: dict) -> str:
         "",
         f"{data['emoji']} <b>{escape(data['name'])}</b>",
         f"Вес: {fmt_weight(data['weight'])}",
+    ]
+    if data.get("location_name"):
+        lines.append(
+            f"📍 {data.get('location_emoji', '')} {escape(data['location_name'])}".strip()
+        )
+    if data.get("same_count"):
+        lines.append(f"В садке теперь: {fmt_int(data['same_count'])} шт.")
+    lines += [
         f"В садок: {fmt_int(data['price'])} 💰",
         f"Опыт: +{fmt_int(data['xp'])} XP",
         f"{data['reaction_label']} · {fmt_seconds(data['reaction'])}",
@@ -379,10 +387,17 @@ def daily_ok(gain: int, coins: int, xp: int, level: int, locations: list[dict], 
 
 
 def net_text(data: dict) -> str:
-    lines = ["🕸️ <b>Сеть поднята</b>", ""]
-    for item in data["items"]:
+    lines = ["🕸️ <b>Сеть поднята</b>"]
+    if data.get("location_name"):
         lines.append(
-            f"{item['emoji']} {escape(item['name'])} — {fmt_weight(item['weight'])}"
+            f"📍 {data.get('location_emoji', '')} {escape(data['location_name'])}".strip()
+        )
+    lines.append("")
+    for item in data["items"]:
+        count = item.get("same_count")
+        tail = f" · теперь {fmt_int(count)} шт." if count else ""
+        lines.append(
+            f"{item['emoji']} {escape(item['name'])} — {fmt_weight(item['weight'])}{tail}"
         )
     gained = sum(item["xp"] for item in data["items"])
     lines.append(f"\nОпыт: +{fmt_int(gained)} XP")

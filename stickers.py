@@ -21,6 +21,17 @@ CACHE_PATH = ROOT / "sticker_cache.json"
 ART_DIR = ROOT / "stickers"
 LOCK = asyncio.Lock()
 
+# Стикеры набора FISH_0bcc9_by_TgEmodziBot для рыб Тихого пруда, по порядку в паке.
+POND_PACK = {
+    "carp": "CAACAgIAAxUAAWq72T5VOTvUew6z9lZV-XuUHz_dAAIirQAC5gbYSbdxf_l9T_JHPQQ",
+    "bleak": "CAACAgIAAxUAAWq72T42cydF2jyAD5LPJasn2OGHAAIlswAC3LnhSaFE4HihMETSPQQ",
+    "roach": "CAACAgIAAxUAAWq72T7zH2T8uN0rdwuSER-GjarzAAIspAACk1jYSZYOIN6kiHN6PQQ",
+    "perch": "CAACAgIAAxUAAWq72T7ouSoEHthY2MCPFF-bcVzpAALloQACiofgSQXDal0-elqOPQQ",
+    "tench": "CAACAgIAAxUAAWq72T7URT9vPaan7JmLZjJiuY4DAALOpwACUq3hSVOehydzVvDCPQQ",
+    "pike": "CAACAgIAAxUAAWq72T6sUEYLC7d8TbPVpdcq6OM2AAJvnwAChFfYSfuF-QdbPad2PQQ",
+    "gold_crucian": "CAACAgIAAxUAAWq72T4ojNxKfR7nEkarS0RDkdoXAALtpgAC3knhSSHT8_9bb5SdPQQ",
+}
+
 PALETTE = (
     (214, 176, 92),
     (168, 178, 188),
@@ -176,6 +187,9 @@ async def sticker_file_id(bot: Bot, user_id: int, fish_id: str) -> str | None:
     fish = FISH_BY_ID.get(fish_id)
     if fish is None:
         return None
+    packed = POND_PACK.get(fish_id)
+    if packed:
+        return packed
     async with LOCK:
         cache = _load()
         cached = cache.get("files", {}).get(fish_id)

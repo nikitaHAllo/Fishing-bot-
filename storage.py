@@ -155,6 +155,13 @@ class Database:
         ).fetchall()
         return {row["bait_id"]: int(row["qty"]) for row in rows}
 
+    def _same_count(self, user_id: int, fish_id: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM keepnet WHERE user_id=? AND fish_id=?",
+            (user_id, fish_id),
+        ).fetchone()
+        return int(row[0])
+
     def _keepnet_summary(self, user_id: int) -> dict:
         row = self.conn.execute(
             "SELECT COUNT(*), COALESCE(SUM(price), 0) FROM keepnet WHERE user_id=?",
@@ -449,6 +456,9 @@ class Database:
                 achievements=achievements,
                 keepnet=self._keepnet_summary(user_id),
                 coins=fresh["coins"],
+                location_name=location["name"] if location else "",
+                location_emoji=location["emoji"] if location else "📍",
+                same_count=self._same_count(user_id, catch["fish_id"]),
             )
             return payload
 
@@ -504,6 +514,8 @@ class Database:
                     (user_id, catch["fish_id"], catch["weight"]),
                 )
                 items.append(catch)
+            for item in items:
+                item["same_count"] = self._same_count(user_id, item["fish_id"])
             self.conn.execute(
                 """
                 UPDATE users
@@ -526,6 +538,8 @@ class Database:
                 "leveled": level > old_level,
                 "new_locations": locations_unlocked(old_level, level),
                 "keepnet": self._keepnet_summary(user_id),
+                "location_name": location["name"] if location else "",
+                "location_emoji": location["emoji"] if location else "📍",
             }
 
         return await self._run(run)
