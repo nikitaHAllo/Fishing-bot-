@@ -8,6 +8,7 @@ from html import escape
 
 from game import ACHIEVEMENTS
 from game_data import (
+    BAIT_BY_ID,
     BAITS,
     FISH,
     FISH_BY_ID,
@@ -105,12 +106,13 @@ def group_welcome() -> str:
 def help_text() -> str:
     return (
         "<b>Как ловить</b>\n\n"
-        "1. Жми «Рыбачить» и жди поклёвку.\n"
-        "2. Как только появится кнопка «Подсечь» — жми сразу. Быстрая реакция увеличивает вес.\n"
-        "3. Если опоздать или рыба рванёт сильнее снасти, она сорвётся.\n"
-        "4. Продай садок и покупай удочки. Старую сдадут со скидкой.\n"
-        "5. Наживка тратится на каждую поклёвку, даже если рыба ушла.\n"
-        "6. В садке помещается 40 рыб. Дальше надо продавать.\n\n"
+        "1. Купи наживку и выбери её в /bait — без неё заброс не пойдёт.\n"
+        "2. Жми «Рыбачить» и жди поклёвку.\n"
+        "3. Как только появится кнопка «Подсечь» — жми сразу. Быстрая реакция увеличивает вес.\n"
+        "4. Если опоздать или рыба рванёт сильнее снасти, она сорвётся.\n"
+        "5. Продай садок и покупай удочки. Старую сдадут со скидкой.\n"
+        "6. Наживка тратится на каждую поклёвку, даже если рыба ушла.\n"
+        "7. В садке помещается 40 рыб. Дальше надо продавать.\n\n"
         "В общем чате улов виден всем. Свой чат выбирается командой /here.\n\n"
         "Команды: /fish /location /bait /net /inventory /profile /help"
     )
@@ -154,6 +156,10 @@ def escape_text(data: dict) -> str:
         f"Редкость: {data['rarity_emoji']} {data['rarity_name']}",
         f"Примерно {fmt_weight(data['weight'])}. Подсечка: {fmt_seconds(data['reaction'])}.",
     ]
+    if data.get("bait_name"):
+        lines.append(
+            f"🪱 Наживка: {data.get('bait_emoji', '🪱')} {escape(data['bait_name'])}"
+        )
     if data.get("bait_empty"):
         lines.append(f"\n{data.get('bait_emoji', '🪱')} Наживка «{escape(data['bait_name'])}» закончилась.")
     return "\n".join(lines)
@@ -180,6 +186,10 @@ def catch_text(data: dict, fish_url: str | None = None) -> str:
     if data.get("location_name"):
         lines.append(
             f"📍 {data.get('location_emoji', '')} {escape(data['location_name'])}".strip()
+        )
+    if data.get("bait_name"):
+        lines.append(
+            f"🪱 Наживка: {data.get('bait_emoji', '🪱')} {escape(data['bait_name'])}"
         )
     if data.get("same_count"):
         lines.append(f"В садке теперь: {fmt_int(data['same_count'])} шт.")
@@ -300,18 +310,31 @@ def rods_text(player: dict) -> str:
 
 
 def bait_text(player: dict, stock: dict[str, int]) -> str:
+    equipped = player.get("bait_id")
+    current = BAIT_BY_ID.get(equipped) if equipped else None
+    if current:
+        qty = stock.get(current["id"], 0)
+        now = (
+            f"Сейчас выбрана: {current['emoji']} <b>{escape(current['name'])}</b> "
+            f"×{fmt_int(qty)} (+{current['luck']} удачи)"
+        )
+    else:
+        now = "Сейчас наживка не выбрана — удача только от удочки и локации."
     lines = [
         "🪱 <b>Наживка</b>",
         f"Монеты: {fmt_int(player['coins'])} 💰",
         "",
+        now,
+        "",
+        "Купи в запас, потом нажми «Выбрать». Без выбранной наживки рыбачить нельзя. За заброс тратится 1 шт.",
+        "",
     ]
-    equipped = player.get("bait_id")
     for bait in BAITS:
         qty = stock.get(bait["id"], 0)
-        worn = " · надета" if equipped == bait["id"] else ""
+        mark = " ✅" if equipped == bait["id"] else ""
         lines.append(
-            f"{bait['emoji']} <b>{bait['name']}</b> — {fmt_int(bait['price'])} 💰, "
-            f"+{bait['luck']} удачи, в запасе {qty}{worn}"
+            f"{bait['emoji']} <b>{escape(bait['name'])}</b> — в запасе {fmt_int(qty)}, "
+            f"+{bait['luck']} удачи, {fmt_int(bait['price'])} 💰{mark}"
         )
     return "\n".join(lines)
 
@@ -444,3 +467,10 @@ def full_net_text() -> str:
 
 def biting_text() -> str:
     return "⚡ Сначала подсеки текущую поклёвку."
+
+
+def no_bait_text() -> str:
+    return (
+        "🪱 Без наживки забросить нельзя.\n"
+        "Купи наживку в магазине, нажми «Выбрать» в /bait — и только потом рыбачь."
+    )

@@ -99,6 +99,16 @@ def spawn(coro) -> None:
     task.add_done_callback(TASKS.discard)
 
 
+async def ack(cb: CallbackQuery, text: str | None = None, *, show_alert: bool = False) -> None:
+    try:
+        if text is None:
+            await cb.answer()
+        else:
+            await cb.answer(text, show_alert=show_alert)
+    except TelegramBadRequest:
+        pass
+
+
 def who(player: dict | None, chat_type: str) -> str:
     if not player or chat_type == "private":
         return ""
@@ -111,6 +121,8 @@ def cast_error(started: dict) -> str:
         return texts.full_net_text()
     if error == "biting":
         return texts.biting_text()
+    if error == "nobait":
+        return texts.no_bait_text()
     return texts.cooldown_text(started.get("left", 1))
 
 
@@ -237,8 +249,13 @@ async def help_cmd(message: Message) -> None:
     await message.answer(texts.help_text(), reply_markup=markup)
 
 
+def _fish_word(text: str) -> bool:
+    return text.strip().casefold() == "фиш"
+
+
 @private.message(Command("fish"))
 @private.message(F.text == BTN_FISH)
+@private.message(F.text.func(_fish_word))
 async def fish(message: Message, player: dict) -> None:
     header = who(player, message.chat.type)
     error = await begin_fishing(message.bot, message.chat.id, message.from_user.id, header)
@@ -307,14 +324,14 @@ async def show_catch(cb: CallbackQuery, header: str, result: dict) -> None:
 async def hook(cb: CallbackQuery, player: dict, db: Database) -> None:
     result = await db.resolve_hook(cb.from_user.id, cb.data[2:], time.time())
     if result is None:
-        await cb.answer("Это не твоя поклёвка или она уже прошла", show_alert=True)
+        await ack(cb, "Это не твоя поклёвка или она уже прошла", show_alert=True)
         return
     header = who(player, cb.message.chat.type)
     if result["escaped"]:
-        await cb.answer("Сорвалась")
+        await ack(cb, "Сорвалась")
         await cb.message.edit_text(header + texts.escape_text(result), reply_markup=NO_INLINE)
         return
-    await cb.answer("Есть")
+    await ack(cb, "Есть")
     await show_catch(cb, header, result)
 
 
@@ -354,16 +371,16 @@ async def sell_callback(cb: CallbackQuery, db: Database) -> None:
         try:
             owner_id = int(owner_raw)
         except ValueError:
-            await cb.answer()
+            await ack(cb)
             return
         if owner_id != cb.from_user.id:
-            await cb.answer("Это чужой садок. Открой свой кнопкой «Садок».", show_alert=True)
+            await ack(cb, "Это чужой садок. Открой свой кнопкой «Садок».", show_alert=True)
             return
     result = await db.sell_all(cb.from_user.id)
     if not result["ok"]:
-        await cb.answer("Садок уже пуст", show_alert=True)
+        await ack(cb, "Садок уже пуст", show_alert=True)
         return
-    await cb.answer("Продано")
+    await ack(cb, "Продано")
     await cb.message.edit_text(
         texts.sold_text(result["count"], result["money"], result["coins"], result["achievements"]),
         reply_markup=NO_INLINE,
@@ -382,13 +399,13 @@ async def shop(message: Message, player: dict) -> None:
 
 @private.callback_query(F.data == "shop:home")
 async def shop_home(cb: CallbackQuery, player: dict) -> None:
-    await cb.answer()
+    await ack(cb)
     await cb.message.edit_text(texts.shop_home(player["coins"]), reply_markup=shop_kb())
 
 
 @private.callback_query(F.data == "shop:rods")
 async def shop_rods(cb: CallbackQuery, player: dict) -> None:
-    await cb.answer()
+    await ack(cb)
     await cb.message.edit_text(texts.rods_text(player), reply_markup=rods_kb(player["rod_id"]))
 
 
@@ -397,17 +414,17 @@ async def buy_rod(cb: CallbackQuery, db: Database) -> None:
     result = await db.buy_rod(cb.from_user.id, cb.data.split(":", 1)[1])
     if not result["ok"]:
         if result["error"] == "money":
-            await cb.answer(
+            await ack(cb, 
                 f"Не хватает монет. Нужно {result['cost']}, есть {result['coins']}.",
                 show_alert=True,
             )
         elif result["error"] == "worse":
-            await cb.answer("Эта удочка не лучше твоей.", show_alert=True)
+            await ack(cb, "Эта удочка не лучше твоей.", show_alert=True)
         else:
-            await cb.answer("Нет такой удочки.", show_alert=True)
+            await ack(cb, "Нет такой удочки.", show_alert=True)
         return
     player = result["player"]
-    await cb.answer("Удочка твоя")
+    await ack(cb, "Удочка твоя")
     await cb.message.edit_text(
         texts.rods_text(player) + texts.achievements_block(result["achievements"]),
         reply_markup=rods_kb(player["rod_id"]),
@@ -417,36 +434,42 @@ async def buy_rod(cb: CallbackQuery, db: Database) -> None:
 @private.callback_query(F.data == "shop:bait")
 async def shop_bait(cb: CallbackQuery, db: Database, player: dict) -> None:
     stock = await db.bait_stock(cb.from_user.id)
-    await cb.answer()
+    await ack(cb)
     await cb.message.edit_text(
         texts.bait_text(player, stock),
         reply_markup=bait_kb(stock, player["bait_id"]),
     )
 
 
+@private.callback_query(F.data == "bait:info")
+async def bait_info(cb: CallbackQuery) -> None:
+    await ack(cb, "Сначала купи наживку, потом нажми «Выбрать».")
+
+
 @private.callback_query(F.data.startswith("bait:"))
 async def buy_bait(cb: CallbackQuery, db: Database) -> None:
     parts = cb.data.split(":")
     if len(parts) != 3:
-        await cb.answer()
+        await ack(cb)
         return
     try:
         count = int(parts[2])
     except ValueError:
-        await cb.answer()
+        await ack(cb)
         return
     result = await db.buy_bait(cb.from_user.id, parts[1], count)
     if not result["ok"]:
         if result["error"] == "money":
-            await cb.answer(
+            await ack(cb, 
                 f"Не хватает монет. Нужно {result['cost']}, есть {result['coins']}.",
                 show_alert=True,
             )
         else:
-            await cb.answer("Нет такой наживки.", show_alert=True)
+            await ack(cb, "Нет такой наживки.", show_alert=True)
         return
     player = result["player"]
-    await cb.answer("Наживка в кармане")
+    qty = result["stock"].get(parts[1], 0)
+    await ack(cb, f"Купил {result['bait_name']} ×{result['bought']}. В запасе {qty} шт. — уже выбрана.")
     await cb.message.edit_text(
         texts.bait_text(player, result["stock"]) + texts.achievements_block(result["achievements"]),
         reply_markup=bait_kb(result["stock"], player["bait_id"]),
@@ -459,13 +482,13 @@ async def equip(cb: CallbackQuery, db: Database) -> None:
     if not result["ok"]:
         messages = {
             "empty": "Этой наживки нет в запасе.",
-            "already": "Уже надета.",
+            "already": "Уже выбрана.",
             "missing": "Нет такой наживки.",
         }
-        await cb.answer(messages.get(result["error"], "Не вышло."), show_alert=True)
+        await ack(cb, messages.get(result["error"], "Не вышло."), show_alert=True)
         return
     player = result["player"]
-    await cb.answer("Наживка надета")
+    await ack(cb, "Наживка выбрана")
     await cb.message.edit_text(
         texts.bait_text(player, result["stock"]),
         reply_markup=bait_kb(result["stock"], player["bait_id"]),
@@ -476,7 +499,7 @@ async def equip(cb: CallbackQuery, db: Database) -> None:
 async def unequip(cb: CallbackQuery, db: Database) -> None:
     result = await db.unequip_bait(cb.from_user.id)
     player = result["player"]
-    await cb.answer("Снял")
+    await ack(cb, "Снял")
     await cb.message.edit_text(
         texts.bait_text(player, result["stock"]),
         reply_markup=bait_kb(result["stock"], player["bait_id"]),
@@ -498,15 +521,15 @@ async def choose_location(cb: CallbackQuery, db: Database) -> None:
     result = await db.set_location(cb.from_user.id, cb.data.split(":", 1)[1])
     if not result["ok"]:
         if result["error"] == "locked":
-            await cb.answer(f"Нужен {result['level']} уровень.", show_alert=True)
+            await ack(cb, f"Нужен {result['level']} уровень.", show_alert=True)
         elif result["error"] == "same":
-            await cb.answer("Ты уже здесь")
+            await ack(cb, "Ты уже здесь")
         else:
-            await cb.answer("Нет такой воды", show_alert=True)
+            await ack(cb, "Нет такой воды", show_alert=True)
         return
     player = result["player"]
     level = texts.level_from_xp(player["xp"])[0]
-    await cb.answer(f"Теперь: {result['name']}")
+    await ack(cb, f"Теперь: {result['name']}")
     await cb.message.edit_text(
         texts.locations_text(player) + texts.achievements_block(result["achievements"]),
         reply_markup=locations_kb(player["location_id"], level),
@@ -523,18 +546,18 @@ async def dex(message: Message, db: Database) -> None:
 async def dex_page(cb: CallbackQuery, db: Database) -> None:
     raw = cb.data.split(":", 1)[1]
     if raw == "stay":
-        await cb.answer()
+        await ack(cb)
         return
     try:
         index = int(raw)
     except ValueError:
-        await cb.answer()
+        await ack(cb)
         return
     if index < 0 or index >= len(LOCATIONS):
-        await cb.answer()
+        await ack(cb)
         return
     records = await db.bestiary(cb.from_user.id)
-    await cb.answer()
+    await ack(cb)
     await cb.message.edit_text(texts.dex_text(index, records), reply_markup=dex_kb(index))
 
 
@@ -620,11 +643,11 @@ async def menu_action(cb: CallbackQuery, player: dict, db: Database) -> None:
     if action == "fish":
         error = await begin_fishing(cb.bot, cb.message.chat.id, cb.from_user.id, header)
         if error:
-            await cb.answer(error.replace("<b>", "").replace("</b>", ""), show_alert=True)
+            await ack(cb, error.replace("<b>", "").replace("</b>", ""), show_alert=True)
             return
-        await cb.answer("Заброс")
+        await ack(cb, "Заброс")
         return
-    await cb.answer()
+    await ack(cb)
     if action == "net":
         view = await db.keepnet_view(cb.from_user.id)
         await cb.message.answer(
@@ -677,7 +700,7 @@ async def fallback(message: Message) -> None:
 
 @private.callback_query()
 async def callback_fallback(cb: CallbackQuery) -> None:
-    await cb.answer()
+    await ack(cb)
 
 
 @public.error()

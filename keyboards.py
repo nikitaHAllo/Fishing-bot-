@@ -108,27 +108,31 @@ def bait_kb(stock: dict[str, int], equipped: str | None) -> InlineKeyboardMarkup
     rows = []
     for bait in BAITS:
         qty = stock.get(bait["id"], 0)
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{bait['emoji']} ×1 · {bait['price']}",
-                    callback_data=f"bait:{bait['id']}:1",
-                ),
-                InlineKeyboardButton(
-                    text=f"×5 · {bait['price'] * 5}",
-                    callback_data=f"bait:{bait['id']}:5",
-                ),
-            ]
-        )
+        title = f"{bait['emoji']} {bait['name']} · {qty} шт."
+        if equipped == bait["id"]:
+            title = f"✅ {title}"
+        rows.append([InlineKeyboardButton(text=title, callback_data="bait:info")])
+        action = []
         if qty > 0 and equipped != bait["id"]:
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"Надеть {bait['name']} ({qty})",
-                        callback_data=f"equip:{bait['id']}",
-                    )
-                ]
+            action.append(
+                InlineKeyboardButton(
+                    text="Выбрать",
+                    callback_data=f"equip:{bait['id']}",
+                )
             )
+        action.append(
+            InlineKeyboardButton(
+                text=f"Купить ×1 · {bait['price']}",
+                callback_data=f"bait:{bait['id']}:1",
+            )
+        )
+        action.append(
+            InlineKeyboardButton(
+                text=f"×5 · {bait['price'] * 5}",
+                callback_data=f"bait:{bait['id']}:5",
+            )
+        )
+        rows.append(action)
     if equipped:
         rows.append(
             [InlineKeyboardButton(text="Снять наживку", callback_data="unequip")]

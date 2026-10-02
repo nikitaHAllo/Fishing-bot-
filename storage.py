@@ -320,6 +320,14 @@ class Database:
     async def begin_cast(self, user_id: int, now: float) -> dict:
         def run():
             user = self._user(user_id)
+            bait_id = user["bait_id"]
+            if not bait_id or bait_id not in BAIT_BY_ID or self._qty(user_id, bait_id) <= 0:
+                if bait_id:
+                    self.conn.execute(
+                        "UPDATE users SET bait_id=NULL WHERE user_id=?",
+                        (user_id,),
+                    )
+                return {"ok": False, "error": "nobait"}
             if self._keepnet_summary(user_id)["count"] >= KEEPNET_LIMIT:
                 return {"ok": False, "error": "full"}
             bite = self._bite(user_id)
@@ -636,16 +644,17 @@ class Database:
                 """,
                 (user_id, bait_id, count),
             )
-            if not user["bait_id"]:
-                self.conn.execute(
-                    "UPDATE users SET bait_id=? WHERE user_id=?",
-                    (bait_id, user_id),
-                )
+            self.conn.execute(
+                "UPDATE users SET bait_id=? WHERE user_id=?",
+                (bait_id, user_id),
+            )
             achievements = self._grant_achievements(user_id)
             return {
                 "ok": True,
                 "player": self._user(user_id),
                 "stock": self._stock(user_id),
+                "bought": count,
+                "bait_name": bait["name"],
                 "achievements": achievements,
             }
 
